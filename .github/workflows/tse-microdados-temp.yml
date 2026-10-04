@@ -1,0 +1,118 @@
+name: tse-microdados-temp
+
+on:
+  push:
+    paths:
+      - '.github/workflows/tse-microdados-temp.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  secoes:
+    name: secoes-${{ matrix.id }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: "2016_SP"
+            url: "https://cdn.tse.jus.br/estatistica/sead/odsele/votacao_secao/votacao_secao_2016_SP.zip"
+          - id: "2018_SP"
+            url: "https://cdn.tse.jus.br/estatistica/sead/odsele/votacao_secao/votacao_secao_2018_SP.zip"
+          - id: "2018_BR"
+            url: "https://cdn.tse.jus.br/estatistica/sead/odsele/votacao_secao/votacao_secao_2018_BR.zip"
+          - id: "2020_SP"
+            url: "https://cdn.tse.jus.br/estatistica/sead/odsele/votacao_secao/votacao_secao_2020_SP.zip"
+          - id: "2022_SP"
+            url: "https://cdn.tse.jus.br/estatistica/sead/odsele/votacao_secao/votacao_secao_2022_SP.zip"
+          - id: "2022_BR"
+            url: "https://cdn.tse.jus.br/estatistica/sead/odsele/votacao_secao/votacao_secao_2022_BR.zip"
+          - id: "2024_SP"
+            url: "https://cdn.tse.jus.br/estatistica/sead/odsele/votacao_secao/votacao_secao_2024_SP.zip"
+    steps:
+      - name: Download oficial TSE
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out work
+          url="${{ matrix.url }}"
+          echo "$url" > out/source_url.txt
+          curl -fL --retry 5 --retry-delay 5 --connect-timeout 30 --max-time 7200             -A "Mozilla/5.0 Projeto28/1.0"             "$url" -o work/source.zip
+          sha256sum work/source.zip | tee out/source.sha256
+          unzip -t work/source.zip | tail -n 3 | tee out/zip_test.txt
+      - name: Extrair somente município de São Paulo
+        shell: bash
+        run: |
+          set -euo pipefail
+          member="$(unzip -Z1 work/source.zip | grep -Ei '\\.csv$' | grep -v -Ei 'leiame|readme' | head -n 1)"
+          echo "$member" | tee out/member.txt
+          unzip -p work/source.zip "$member" > work/full.csv
+          head -n 1 work/full.csv > work/sp.csv
+          grep -F ';"71072";' work/full.csv >> work/sp.csv || true
+          rows="$(($(wc -l < work/sp.csv)-1))"
+          bytes="$(wc -c < work/sp.csv)"
+          printf 'dataset=%s\nrows=%s\nbytes_uncompressed=%s\n' "${{ matrix.id }}" "$rows" "$bytes" | tee out/manifest.txt
+          if [ "$rows" -le 0 ]; then
+            echo "Nenhuma linha de São Paulo encontrada" >&2
+            exit 2
+          fi
+          gzip -9 -c work/sp.csv > "out/votacao_secao_${{ matrix.id }}_SAO_PAULO.csv.gz"
+          rm -f work/full.csv work/sp.csv work/source.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: "tse-votacao-secao-${{ matrix.id }}-sao-paulo"
+          path: out/
+          compression-level: 0
+          retention-days: 1
+
+  apoio_2024:
+    name: apoio-2024
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: "local_votacao_2024"
+            url: "https://cdn.tse.jus.br/estatistica/sead/odsele/eleitorado_locais_votacao/eleitorado_local_votacao_2024.zip"
+          - id: "perfil_eleitor_secao_2024_SP"
+            url: "https://cdn.tse.jus.br/estatistica/sead/odsele/perfil_eleitor_secao/perfil_eleitor_secao_2024_SP.zip"
+          - id: "detalhe_votacao_secao_2024"
+            url: "https://cdn.tse.jus.br/estatistica/sead/odsele/detalhe_votacao_secao/detalhe_votacao_secao_2024.zip"
+    steps:
+      - name: Download oficial TSE
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out work
+          url="${{ matrix.url }}"
+          echo "$url" > out/source_url.txt
+          curl -fL --retry 5 --retry-delay 5 --connect-timeout 30 --max-time 7200             -A "Mozilla/5.0 Projeto28/1.0"             "$url" -o work/source.zip
+          sha256sum work/source.zip | tee out/source.sha256
+          unzip -t work/source.zip | tail -n 3 | tee out/zip_test.txt
+      - name: Extrair somente município de São Paulo
+        shell: bash
+        run: |
+          set -euo pipefail
+          member="$(unzip -Z1 work/source.zip | grep -Ei '\\.csv$' | grep -v -Ei 'leiame|readme' | head -n 1)"
+          echo "$member" | tee out/member.txt
+          unzip -p work/source.zip "$member" > work/full.csv
+          head -n 1 work/full.csv > work/sp.csv
+          grep -F ';"71072";' work/full.csv >> work/sp.csv || true
+          rows="$(($(wc -l < work/sp.csv)-1))"
+          bytes="$(wc -c < work/sp.csv)"
+          printf 'dataset=%s\nrows=%s\nbytes_uncompressed=%s\n' "${{ matrix.id }}" "$rows" "$bytes" | tee out/manifest.txt
+          if [ "$rows" -le 0 ]; then
+            echo "Nenhuma linha de São Paulo encontrada" >&2
+            exit 2
+          fi
+          gzip -9 -c work/sp.csv > "out/${{ matrix.id }}_SAO_PAULO.csv.gz"
+          rm -f work/full.csv work/sp.csv work/source.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: "tse-${{ matrix.id }}-sao-paulo"
+          path: out/
+          compression-level: 0
+          retention-days: 1
