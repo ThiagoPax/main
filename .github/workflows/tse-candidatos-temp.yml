@@ -1,0 +1,51 @@
+name: tse-candidatos-temp
+on:
+  push:
+    paths:
+      - '.github/workflows/tse-candidatos-temp.yml'
+permissions:
+  contents: read
+jobs:
+  candidatos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Download
+        shell: bash
+        run: |
+          set -e
+          mkdir -p out work
+          url="https://cdn.tse.jus.br/estatistica/sead/odsele/consulta_cand/consulta_cand_2024.zip"
+          echo "$url" > out/source_url.txt
+          curl -fL --retry 6 --retry-all-errors --retry-delay 5 -A "Mozilla/5.0 Projeto28/1.0" -e "https://dadosabertos.tse.jus.br/" "$url" -o work/source.zip
+          sha256sum work/source.zip | tee out/source.sha256
+          unzip -t work/source.zip | tail -n 3 | tee out/zip_test.txt
+      - name: Filtrar SP capital vereador
+        shell: bash
+        run: |
+          python - <<'PY'
+          import zipfile,csv,io,sys,os
+          z=zipfile.ZipFile("work/source.zip")
+          members=[n for n in z.namelist() if n.lower().endswith("_sp.csv")]
+          member=members[0]
+          with z.open(member) as raw:
+            rd=csv.reader(io.TextIOWrapper(raw,encoding="latin-1",newline=""),delimiter=";")
+            h=next(rd); H=[x.strip().strip('"').upper() for x in h]
+            iu=H.index("SG_UE"); ic=H.index("DS_CARGO")
+            out=open("out/consulta_cand_2024_SP_SAO_PAULO.csv","w",encoding="utf-8",newline="")
+            wr=csv.writer(out,delimiter=";"); wr.writerow(h)
+            n=0
+            for row in rd:
+              if row[iu].strip().strip('"')=="71072" and row[ic].strip().strip('"').upper()=="VEREADOR":
+                wr.writerow(row); n+=1
+            out.close()
+          open("out/manifest.txt","w").write(f"member={member}\nrows={n}\n")
+          print("rows",n)
+          if n<1000: sys.exit(4)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tse-candidatos-2024-sao-paulo
+          path: out/
+          compression-level: 6
+          retention-days: 1
