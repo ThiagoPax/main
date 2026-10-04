@@ -1,0 +1,70 @@
+name: tse-presidente-temp
+
+on:
+  push:
+    paths:
+      - '.github/workflows/tse-presidente-temp.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  presidente:
+    name: presidente-${{ matrix.year }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        year: ["2018","2022"]
+    steps:
+      - name: Download oficial TSE
+        shell: bash
+        run: |
+          set -e
+          mkdir -p out work
+          url="https://cdn.tse.jus.br/estatistica/sead/odsele/votacao_secao/votacao_secao_${{ matrix.year }}_BR.zip"
+          echo "$url" > out/source_url.txt
+          curl -fL --retry 6 --retry-all-errors --retry-delay 5 --connect-timeout 30 --max-time 7200             -A "Mozilla/5.0 Projeto28/1.0" -e "https://dadosabertos.tse.jus.br/"             "$url" -o work/source.zip
+          sha256sum work/source.zip | tee out/source.sha256
+          unzip -t work/source.zip | tail -n 3 | tee out/zip_test.txt
+
+      - name: Filtrar São Paulo capital
+        shell: bash
+        run: |
+          set -e
+          python - <<'PY'
+          import csv,gzip,io,os,zipfile,sys
+          year=os.environ["YEAR"]
+          with zipfile.ZipFile("work/source.zip") as z:
+              members=[n for n in z.namelist() if n.lower().endswith(".csv")]
+              member=members[0]
+              open("out/member.txt","w").write(member+"\n")
+              with z.open(member) as raw:
+                  txt=io.TextIOWrapper(raw,encoding="latin-1",newline="")
+                  rd=csv.reader(txt,delimiter=";",quotechar='"')
+                  header=next(rd); norm=[h.strip().strip('"').upper() for h in header]
+                  idx=norm.index("CD_MUNICIPIO")
+                  outfile=f"out/votacao_secao_{year}_BR_SAO_PAULO.csv.gz"
+                  rows=0
+                  with gzip.open(outfile,"wt",encoding="utf-8",newline="") as gz:
+                      wr=csv.writer(gz,delimiter=";",quotechar='"',quoting=csv.QUOTE_MINIMAL)
+                      wr.writerow(header)
+                      for row in rd:
+                          if idx<len(row) and row[idx].strip().strip('"')=="71072":
+                              wr.writerow(row); rows+=1
+              open("out/manifest.txt","w").write(f"dataset=votacao_secao_{year}_BR\nmember={member}\nrows={rows}\n")
+              print(year,member,rows)
+              if rows<=0: sys.exit(4)
+          PY
+        env:
+          YEAR: ${{ matrix.year }}
+
+      - run: rm -f work/source.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: "tse-presidente-${{ matrix.year }}-sao-paulo"
+          path: out/
+          compression-level: 0
+          retention-days: 1
